@@ -1,7 +1,17 @@
 import axios from 'axios';
 import type { User, QuestionPaper, SingleQuestion, DashboardStats, GenerateQuestionsRequest } from '../types';
 
-const API_BASE = '/api';
+// Compute backend API base URL dynamically
+const getApiBase = (): string => {
+  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL;
+  if (envUrl && envUrl.trim() !== '') {
+    const cleanUrl = envUrl.trim().replace(/\/+$/, '');
+    return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  }
+  return '/api';
+};
+
+const API_BASE = getApiBase();
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -111,11 +121,11 @@ export const paperService = {
   },
   getExportDocxUrl(id: string, includeAnswers: boolean = false) {
     const token = localStorage.getItem('teachgenie_token');
-    return `/api/papers/${id}/export/docx?include_answers=${includeAnswers}&token=${token}`;
+    return `${API_BASE}/papers/${id}/export/docx?include_answers=${includeAnswers}&token=${token}`;
   },
   getExportPdfUrl(id: string, includeAnswers: boolean = false) {
     const token = localStorage.getItem('teachgenie_token');
-    return `/api/papers/${id}/export/pdf?include_answers=${includeAnswers}&token=${token}`;
+    return `${API_BASE}/papers/${id}/export/pdf?include_answers=${includeAnswers}&token=${token}`;
   }
 };
 
