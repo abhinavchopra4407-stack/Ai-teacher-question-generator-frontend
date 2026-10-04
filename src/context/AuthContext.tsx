@@ -28,11 +28,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const userData = await authService.getMe();
           setUser(userData);
           setToken(storedToken);
-        } catch (error) {
-          console.error("Session expired or invalid:", error);
-          localStorage.removeItem('teachgenie_token');
-          setToken(null);
-          setUser(null);
+        } catch (error: any) {
+          console.error("Session verification error:", error);
+          if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+            console.warn("JWT token expired or invalid (401/403). Clearing session.");
+            localStorage.removeItem('teachgenie_token');
+            setToken(null);
+            setUser(null);
+          } else {
+            console.warn("Backend network issue or cold start. Retaining session token.");
+            setToken(storedToken);
+          }
         }
       }
       setIsLoading(false);
