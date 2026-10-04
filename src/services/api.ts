@@ -156,6 +156,14 @@ export const chatService = {
   async deleteConversation(id: string) {
     const res = await api.delete(`/chat/conversations/${id}`);
     return res.data;
+  },
+  async transcribeAudio(formData: FormData): Promise<{ transcript: string }> {
+    const res = await api.post('/ai/voice/transcribe', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return res.data;
   }
 };
 

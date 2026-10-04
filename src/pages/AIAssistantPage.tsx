@@ -18,12 +18,14 @@ import {
   Lightbulb,
   Code,
   Mic,
-  MicOff,
   Volume2,
   VolumeX,
   Square,
   Radio,
-  Globe
+  Globe,
+  Loader2,
+  X,
+  Check
 } from 'lucide-react';
 
 interface AIAssistantPageProps {
@@ -51,8 +53,10 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'hi'>('en');
   const [autoPlayAudio, setAutoPlayAudio] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [interimTranscript, setInterimTranscript] = useState('');
-  const [speechSupported, setSpeechSupported] = useState(true);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -60,16 +64,15 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
+  const recordingTimerRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const cancelRecordingRef = useRef<boolean>(false);
 
   // Detect Web Speech API support & load available TTS voices on mount
   useEffect(() => {
     loadConversations();
-
-    // Check Speech Recognition support
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setSpeechSupported(false);
-    }
 
     // Load Speech Synthesis Voices
     if ('speechSynthesis' in window) {
@@ -82,7 +85,13 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
 
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
       }
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -135,11 +144,24 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     }
   };
 
-  // --- Voice AI Teacher Speech Recognition (Web Speech API) ---
-  const startListening = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      showToast('Browser Unsupported', 'Speech recognition is not supported in this browser. Please use Google Chrome or MS Edge.', 'error');
+  // --- Voice AI Teacher MediaRecorder & Fallback Flow ---
+
+  const formatTime = (secs: number): string => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const stopAudioTracks = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+  };
+
+  const startMediaRecorder = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast('Microphone Unsupported', 'Audio recording is not supported in this browser.', 'error');
       return;
     }
 
@@ -147,16 +169,154 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     stopListening();
 
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+      cancelRecordingRef.current = false;
+
+      let options: MediaRecorderOptions = {};
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          options = { mimeType: 'audio/webm;codecs=opus' };
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          options = { mimeType: 'audio/webm' };
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          options = { mimeType: 'audio/mp4' };
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+          options = { mimeType: 'audio/ogg' };
+        }
+      }
+
+      const recorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        stopAudioTracks();
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+
+        setIsRecording(false);
+
+        if (cancelRecordingRef.current) {
+          cancelRecordingRef.current = false;
+          setRecordingSeconds(0);
+          return;
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        setRecordingSeconds(0);
+
+        if (audioBlob.size < 100) {
+          showToast('Empty Audio', 'No speech captured in recording. Please try speaking again.', 'error');
+          return;
+        }
+
+        await processAndTranscribeAudio(audioBlob);
+      };
+
+      recorder.start(200);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((prev) => {
+          if (prev >= 60) {
+            stopMediaRecorder();
+            return 60;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+
+      showToast('Recording Started', selectedLanguage === 'hi' ? 'बोलना शुरू करें (Speak in Hindi)' : 'Speak your question into microphone...', 'info');
+
+    } catch (err: any) {
+      stopAudioTracks();
+      setIsRecording(false);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        showToast('Microphone Permission Denied', 'Please grant microphone access in your browser location settings.', 'error');
+      } else {
+        showToast('Microphone Error', `Could not access microphone: ${err.message || 'Device unavailable'}`, 'error');
+      }
+    }
+  };
+
+  const stopMediaRecorder = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    } else {
+      setIsRecording(false);
+      stopAudioTracks();
+    }
+  };
+
+  const cancelMediaRecorder = () => {
+    cancelRecordingRef.current = true;
+    stopMediaRecorder();
+    showToast('Cancelled', 'Audio recording cancelled.', 'info');
+  };
+
+  const processAndTranscribeAudio = async (audioBlob: Blob) => {
+    setIsTranscribing(true);
+    try {
+      const formData = new FormData();
+      const ext = audioBlob.type.includes('mp4') ? 'm4a' : (audioBlob.type.includes('ogg') ? 'ogg' : 'webm');
+      formData.append('file', audioBlob, `recording.${ext}`);
+      formData.append('language', selectedLanguage);
+
+      const data = await chatService.transcribeAudio(formData);
+      if (data.transcript && data.transcript.trim()) {
+        const text = data.transcript.trim();
+        setInputMessage((prev) => (prev ? `${prev} ${text}` : text));
+        showToast('Speech Recognized', 'Transcript added! You can review or edit before sending.', 'success');
+      } else {
+        showToast('No Speech Recognized', 'Could not detect clear speech. Please try speaking again.', 'info');
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err.message || 'Voice transcription failed.';
+      showToast('Transcription Error', detail, 'error');
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const toggleMicrophone = () => {
+    if (isRecording) {
+      stopMediaRecorder();
+      return;
+    }
+    if (isListening) {
+      stopListening();
+      return;
+    }
+
+    stopSpeaking();
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      startMediaRecorder();
+      return;
+    }
+
+    try {
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
 
       recognition.onstart = () => {
         setIsListening(true);
         setInterimTranscript('');
-        showToast('Listening...', selectedLanguage === 'hi' ? 'बोलना शुरू करें (Speak now in Hindi)' : 'Speak your question now...', 'info');
       };
 
       recognition.onresult = (event: any) => {
@@ -183,13 +343,14 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
       };
 
       recognition.onerror = (event: any) => {
-        logger_warn(`Speech recognition error: ${event.error}`);
+        logger_warn(`Web Speech API error (${event.error}). Switching to MediaRecorder fallback.`);
         setIsListening(false);
         setInterimTranscript('');
         if (event.error === 'not-allowed') {
           showToast('Microphone Permission Denied', 'Please allow microphone access in your browser location settings.', 'error');
-        } else if (event.error !== 'no-speech') {
-          showToast('Speech Recognition Error', `Could not capture audio: ${event.error}`, 'error');
+        } else {
+          // Seamless fallback on network or other error!
+          startMediaRecorder();
         }
       };
 
@@ -199,9 +360,9 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
       };
 
       recognition.start();
-    } catch (err: any) {
-      setIsListening(false);
-      showToast('Error', 'Failed to start microphone recording', 'error');
+    } catch (e) {
+      logger_warn('Web Speech API exception. Falling back to MediaRecorder.');
+      startMediaRecorder();
     }
   };
 
@@ -212,6 +373,9 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
       } catch (e) {
         // Ignore
       }
+    }
+    if (isRecording) {
+      stopMediaRecorder();
     }
     setIsListening(false);
     setInterimTranscript('');
@@ -838,8 +1002,46 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
           )}
         </div>
 
-        {/* Live Speech Recognition Transcript Banner */}
-        {(isListening || interimTranscript) && (
+        {/* Live Speech & Recording Status Banner */}
+        {isRecording && (
+          <div className="px-4 py-2.5 bg-rose-500 text-white flex items-center justify-between text-xs font-semibold animate-in fade-in duration-150 shadow-md">
+            <div className="flex items-center space-x-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0" />
+              <Radio className="w-4 h-4 animate-pulse shrink-0" />
+              <span>Recording audio ({selectedLanguage === 'hi' ? 'Hindi' : 'English'}):</span>
+              <span className="font-mono bg-rose-700/80 px-2 py-0.5 rounded text-white font-bold">{formatTime(recordingSeconds)} / 01:00</span>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                onClick={stopMediaRecorder}
+                className="px-3 py-1 rounded bg-white text-rose-700 font-bold hover:bg-rose-50 transition-colors flex items-center space-x-1 cursor-pointer shadow-xs"
+                title="Stop recording and convert to text"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Done</span>
+              </button>
+              <button
+                onClick={cancelMediaRecorder}
+                className="px-2.5 py-1 rounded bg-rose-700 text-white hover:bg-rose-800 transition-colors flex items-center space-x-1 font-medium cursor-pointer"
+                title="Cancel recording"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Cancel</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isTranscribing && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-blue-700 to-indigo-700 text-white flex items-center justify-between text-xs font-semibold animate-in fade-in duration-150 shadow-md">
+            <div className="flex items-center space-x-2.5">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-cyan-300" />
+              <span>Transcribing audio using Whisper AI... Please wait...</span>
+            </div>
+          </div>
+        )}
+
+        {(isListening || interimTranscript) && !isRecording && !isTranscribing && (
           <div className="px-4 py-2 bg-rose-50 border-t border-rose-200 flex items-center justify-between text-xs text-rose-900 animate-in fade-in duration-150">
             <div className="flex items-center space-x-2 truncate">
               <Radio className="w-4 h-4 text-rose-600 animate-pulse shrink-0" />
@@ -866,31 +1068,42 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={`Ask anything by typing or clicking the microphone... (${selectedLanguage === 'hi' ? 'हिंदी' : 'English'}, Enter to send)`}
               className="w-full pl-4 pr-24 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white resize-none shadow-xs"
+              disabled={isTranscribing || isRecording}
             />
 
             <div className="absolute right-3 bottom-3 flex items-center space-x-1.5">
               {/* MICROPHONE BUTTON */}
               <button
-                onClick={isListening ? stopListening : startListening}
+                onClick={toggleMicrophone}
+                disabled={isTranscribing || isLoading}
                 className={`
                   p-2 rounded-lg text-white shadow-xs transition-all cursor-pointer
-                  ${isListening 
+                  ${isRecording || isListening
                     ? 'bg-rose-600 hover:bg-rose-700 animate-pulse ring-2 ring-rose-400' 
-                    : (speechSupported ? 'bg-slate-700 hover:bg-slate-800' : 'bg-slate-300 cursor-not-allowed')}
+                    : (isTranscribing ? 'bg-indigo-600 cursor-wait' : 'bg-slate-700 hover:bg-slate-800')}
                 `}
-                title={isListening ? 'Stop Recording' : `Click to speak question in ${selectedLanguage === 'hi' ? 'Hindi' : 'English'}`}
-                disabled={!speechSupported}
+                title={
+                  isTranscribing 
+                    ? 'Transcribing audio...' 
+                    : (isRecording || isListening ? 'Stop Recording' : `Click to speak question in ${selectedLanguage === 'hi' ? 'Hindi' : 'English'}`)
+                }
               >
-                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                {isTranscribing ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : isRecording || isListening ? (
+                  <Square className="w-4 h-4 fill-white" />
+                ) : (
+                  <Mic className="w-4 h-4" />
+                )}
               </button>
 
               {/* SEND BUTTON */}
               <button
                 onClick={() => handleSendMessage()}
-                disabled={!inputMessage.trim() || isLoading}
+                disabled={!inputMessage.trim() || isLoading || isTranscribing || isRecording}
                 className={`
                   p-2 rounded-lg text-white shadow-xs transition-all cursor-pointer
-                  ${inputMessage.trim() && !isLoading 
+                  ${inputMessage.trim() && !isLoading && !isTranscribing && !isRecording
                     ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700' 
                     : 'bg-slate-300 cursor-not-allowed'}
                 `}
@@ -902,7 +1115,7 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
           </div>
 
           <p className="text-[11px] text-center text-slate-400 mt-2">
-            TeachGenie Voice AI Teacher uses Web Speech APIs. Always verify educational answers prior to classroom distribution.
+            TeachGenie Voice AI Teacher uses Groq Whisper & Web Speech APIs. Always verify educational answers prior to classroom distribution.
           </p>
         </footer>
       </main>
