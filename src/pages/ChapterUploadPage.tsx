@@ -100,7 +100,31 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       return;
     }
 
-    const contentToUse = extractedText || rawText;
+    let contentToUse = extractedText || rawText;
+    let currentDocId = documentId;
+
+    if (activeTab === 'upload' && file && !extractedText) {
+      setExtracting(true);
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', chapterTitle || file.name);
+        const res = await documentService.upload(formData);
+        contentToUse = res.extracted_text;
+        currentDocId = res.document_id;
+        setExtractedText(res.extracted_text);
+        setWordCount(res.word_count);
+        setDocumentId(res.document_id);
+        setChapterText(res.extracted_text);
+      } catch (err: any) {
+        setError(err.response?.data?.detail || 'Failed to extract text from document.');
+        setExtracting(false);
+        return;
+      } finally {
+        setExtracting(false);
+      }
+    }
+
     if (!contentToUse || contentToUse.trim().length < 20) {
       setError('Please extract or paste chapter content before generating questions.');
       return;
@@ -111,7 +135,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
 
     try {
       const req: GenerateQuestionsRequest = {
-        document_id: documentId,
+        document_id: currentDocId,
         chapter_title: chapterTitle,
         subject,
         grade,
@@ -130,7 +154,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       const result = await questionService.generate(req);
       setGeneratedPaperData({
         ...result,
-        document_id: documentId,
+        document_id: currentDocId,
         chapter_text: contentToUse,
         school_name: "TeachGenie Model School",
         teacher_name: "",
