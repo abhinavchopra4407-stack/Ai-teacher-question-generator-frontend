@@ -98,6 +98,24 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
     }
   };
 
+  const formatErrorDetail = (err: any, fallbackMessage: string): string => {
+    const detail = err.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail.map((d: any) => (typeof d === 'string' ? d : d.msg || JSON.stringify(d))).join('; ');
+    }
+    if (typeof detail === 'object' && detail !== null) {
+      return JSON.stringify(detail);
+    }
+    if (err.response?.data?.message && typeof err.response.data.message === 'string') {
+      return err.response.data.message;
+    }
+    if (err.message && typeof err.message === 'string') {
+      return err.message;
+    }
+    return fallbackMessage;
+  };
+
   const handleProcessDocument = async () => {
     setError('');
     setExtracting(true);
@@ -123,7 +141,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       setChapterText(res.extracted_text);
       showToast('Document Processed', `Extracted ${res.word_count} words successfully.`, 'success');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to extract text from document.');
+      setError(formatErrorDetail(err, 'Failed to extract text from document.'));
     } finally {
       setExtracting(false);
     }
@@ -152,7 +170,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
         setDocumentId(res.document_id);
         setChapterText(res.extracted_text);
       } catch (err: any) {
-        setError(err.response?.data?.detail || 'Failed to extract text from document.');
+        setError(formatErrorDetail(err, 'Failed to extract text from document.'));
         setExtracting(false);
         return;
       } finally {
@@ -200,7 +218,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       showToast('Questions Generated', `Generated ${totalQuestionsCount} questions (${totalMarksCount} Total Marks) successfully!`, 'success');
       setActivePage('editor');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'AI question generation failed. Please try again.');
+      setError(formatErrorDetail(err, 'AI question generation failed. Please try again.'));
     } finally {
       setGenerating(false);
     }
