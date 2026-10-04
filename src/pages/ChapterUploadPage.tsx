@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { documentService, questionService } from '../services/api';
-import type { GenerateQuestionsRequest } from '../types';
+import type { GenerateQuestionsRequest, SectionConfig } from '../types';
 import { 
   UploadCloud, 
   FileCheck, 
@@ -38,10 +38,45 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
   const [board, setBoard] = useState('CBSE / General');
   const [language, setLanguage] = useState('English');
   const [difficulty, setDifficulty] = useState('Medium');
-  const [veryShortMarks, setVeryShortMarks] = useState(2);
-  const [shortMarks, setShortMarks] = useState(4);
-  const [longMarks, setLongMarks] = useState(8);
+  
+  const [sections, setSections] = useState<SectionConfig[]>([
+    {
+      id: 'sec-1',
+      name: 'Very Short Answer',
+      type: 'Very Short Answer',
+      enabled: true,
+      question_count: 3,
+      marks_per_question: 2,
+      expected_length: '1-10 words',
+      difficulty: 'Easy'
+    },
+    {
+      id: 'sec-2',
+      name: 'Short Answer',
+      type: 'Short Answer',
+      enabled: true,
+      question_count: 3,
+      marks_per_question: 4,
+      expected_length: '40-60 words',
+      difficulty: 'Medium'
+    },
+    {
+      id: 'sec-3',
+      name: 'Long Answer',
+      type: 'Long Answer',
+      enabled: true,
+      question_count: 3,
+      marks_per_question: 8,
+      expected_length: '150-250 words',
+      difficulty: 'Hard'
+    }
+  ]);
+
   const [specialInstructions, setSpecialInstructions] = useState('');
+
+  const enabledSections = sections.filter(s => s.enabled);
+  const totalQuestionsCount = enabledSections.reduce((sum, s) => sum + Number(s.question_count || 0), 0);
+  const totalMarksCount = enabledSections.reduce((sum, s) => sum + (Number(s.question_count || 0) * Number(s.marks_per_question || 0)), 0);
 
   const [extracting, setExtracting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -142,10 +177,11 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
         board,
         language,
         difficulty,
+        sections: enabledSections,
         marks_distribution: {
-          very_short: Number(veryShortMarks),
-          short: Number(shortMarks),
-          long: Number(longMarks)
+          very_short: 2,
+          short: 4,
+          long: 8
         },
         special_instructions: specialInstructions,
         raw_content: contentToUse
@@ -161,7 +197,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
         instructions: "Attempt all questions. Read instructions carefully."
       });
 
-      showToast('Questions Generated', 'Generated 3 Very Short, 3 Short, and 3 Long answer questions!', 'success');
+      showToast('Questions Generated', `Generated ${totalQuestionsCount} questions (${totalMarksCount} Total Marks) successfully!`, 'success');
       setActivePage('editor');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'AI question generation failed. Please try again.');
@@ -388,35 +424,82 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Marks per Question Category</label>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Very Short (3)</span>
-                  <input
-                    type="number"
-                    value={veryShortMarks}
-                    onChange={(e) => setVeryShortMarks(Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-slate-300 text-center font-bold"
-                  />
+              <div className="flex items-center justify-between mb-2">
+                <label className="block font-bold text-slate-700">Question Sections & Total Marks</label>
+                <div className="flex items-center space-x-2 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
+                  <span>Total: {totalQuestionsCount} Qs</span>
+                  <span>•</span>
+                  <span>{totalMarksCount} Marks</span>
                 </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Short (3)</span>
-                  <input
-                    type="number"
-                    value={shortMarks}
-                    onChange={(e) => setShortMarks(Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-slate-300 text-center font-bold"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Long (3)</span>
-                  <input
-                    type="number"
-                    value={longMarks}
-                    onChange={(e) => setLongMarks(Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-slate-300 text-center font-bold"
-                  />
-                </div>
+              </div>
+
+              <div className="space-y-3">
+                {sections.map((sec, idx) => (
+                  <div key={sec.id || idx} className={`p-3.5 rounded-2xl border transition-all ${sec.enabled ? 'bg-slate-50/80 border-slate-200 shadow-2xs' : 'bg-slate-100/50 border-slate-200 opacity-60'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={sec.enabled}
+                          onChange={(e) => {
+                            const next = [...sections];
+                            next[idx].enabled = e.target.checked;
+                            setSections(next);
+                          }}
+                          className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                        />
+                        <input
+                          type="text"
+                          value={sec.name}
+                          onChange={(e) => {
+                            const next = [...sections];
+                            next[idx].name = e.target.value;
+                            setSections(next);
+                          }}
+                          className="text-xs font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 px-1 py-0.5 focus:outline-hidden"
+                        />
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
+                        Subtotal: {Number(sec.question_count || 0) * Number(sec.marks_per_question || 0)} Marks
+                      </span>
+                    </div>
+
+                    {sec.enabled && (
+                      <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
+                        <div>
+                          <span className="text-slate-500 block mb-0.5 font-semibold">Questions Count</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="20"
+                            value={sec.question_count}
+                            onChange={(e) => {
+                              const next = [...sections];
+                              next[idx].question_count = Math.max(1, Number(e.target.value));
+                              setSections(next);
+                            }}
+                            className="w-full p-1.5 rounded-lg border border-slate-300 font-bold bg-white text-center"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block mb-0.5 font-semibold">Marks Per Question</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="20"
+                            value={sec.marks_per_question}
+                            onChange={(e) => {
+                              const next = [...sections];
+                              next[idx].marks_per_question = Math.max(1, Number(e.target.value));
+                              setSections(next);
+                            }}
+                            className="w-full p-1.5 rounded-lg border border-slate-300 font-bold bg-white text-center"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -441,12 +524,12 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
               {generating ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Generating 9 AI Questions...</span>
+                  <span>Generating {totalQuestionsCount} AI Questions ({totalMarksCount} Marks)...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5 animate-pulse" />
-                  <span>Generate 9 AI Questions</span>
+                  <span>Generate {totalQuestionsCount} AI Questions ({totalMarksCount} Marks)</span>
                 </>
               )}
             </button>

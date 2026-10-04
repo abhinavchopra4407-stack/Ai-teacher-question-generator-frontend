@@ -7,6 +7,17 @@ export interface User {
   created_at: string;
 }
 
+export interface SectionConfig {
+  id?: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  question_count: number;
+  marks_per_question: number;
+  expected_length?: string;
+  difficulty?: string;
+}
+
 export interface SingleQuestion {
   id: string;
   question_number: number;
@@ -15,6 +26,8 @@ export interface SingleQuestion {
   difficulty: 'Easy' | 'Medium' | 'Hard' | string;
   marks: number;
   related_topic: string;
+  section_name?: string;
+  source_pages?: number[];
   answer?: string;
   marking_points?: string[];
   expected_length?: string;
@@ -34,6 +47,7 @@ export interface QuestionPaper {
   school_name?: string;
   teacher_name?: string;
   instructions?: string;
+  sections?: SectionConfig[];
   questions: SingleQuestion[];
   answer_key?: SingleQuestion[];
   created_at: string;
@@ -54,6 +68,7 @@ export interface GenerateQuestionsRequest {
   board?: string;
   language?: string;
   difficulty?: string;
+  sections?: SectionConfig[];
   marks_distribution?: {
     very_short: number;
     short: number;

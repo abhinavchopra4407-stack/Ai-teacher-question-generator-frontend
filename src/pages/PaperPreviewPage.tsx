@@ -79,9 +79,7 @@ export const PaperPreviewPage: React.FC<PaperPreviewPageProps> = ({
     ...(paper.long_questions || [])
   ];
 
-  const vsQuestions = allQuestions.filter((q: any) => q.question_type.includes("Very Short"));
-  const sQuestions = allQuestions.filter((q: any) => q.question_type.includes("Short") && !q.question_type.includes("Very"));
-  const lQuestions = allQuestions.filter((q: any) => q.question_type.includes("Long"));
+
 
   const handlePrint = () => {
     window.print();
@@ -255,77 +253,41 @@ export const PaperPreviewPage: React.FC<PaperPreviewPageProps> = ({
           )}
         </div>
 
-        {vsQuestions.length > 0 && (
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-blue-900 uppercase border-b border-blue-200 pb-1">
-              SECTION A: VERY SHORT ANSWER QUESTIONS ({vsQuestions.length} x {vsQuestions[0]?.marks || 2} = {vsQuestions.length * (vsQuestions[0]?.marks || 2)} Marks)
-            </h3>
-            <div className="space-y-3 text-sm text-slate-900">
-              {vsQuestions.map((q: any) => {
-                const currentNum = globalCounter++;
-                return (
-                  <div key={q.id} className="flex justify-between items-start leading-relaxed">
-                    <div>
-                      <span className="font-bold mr-2">Q{currentNum}.</span>
-                      <span>{q.question_text}</span>
+        {Object.entries(
+          allQuestions.reduce((acc: any, q: any) => {
+            const secName = q.section_name || (q.question_type.includes("Very Short") ? "SECTION A: VERY SHORT ANSWER QUESTIONS" : (q.question_type.includes("Short") ? "SECTION B: SHORT ANSWER QUESTIONS" : "SECTION C: LONG ANSWER QUESTIONS"));
+            if (!acc[secName]) acc[secName] = [];
+            acc[secName].push(q);
+            return acc;
+          }, {})
+        ).map(([secTitle, qList]: [string, any], secIdx) => {
+          const subtotal = qList.reduce((sum: number, q: any) => sum + q.marks, 0);
+          return (
+            <div key={secTitle || secIdx} className="space-y-4 pt-2">
+              <h3 className="text-sm font-bold text-blue-900 uppercase border-b border-blue-200 pb-1">
+                {secTitle} ({qList.length} Questions — Subtotal: {subtotal} Marks)
+              </h3>
+              <div className="space-y-3 text-sm text-slate-900">
+                {qList.map((q: any) => {
+                  const currentNum = globalCounter++;
+                  return (
+                    <div key={q.id} className="flex justify-between items-start leading-relaxed">
+                      <div>
+                        <span className="font-bold mr-2">Q{currentNum}.</span>
+                        <span>{q.question_text}</span>
+                      </div>
+                      <span className="font-bold text-xs text-slate-500 whitespace-nowrap ml-4">
+                        [{q.marks} {q.marks === 1 ? 'Mark' : 'Marks'}]
+                      </span>
                     </div>
-                    <span className="font-bold text-xs text-slate-500 whitespace-nowrap ml-4">
-                      [{q.marks} {q.marks === 1 ? 'Mark' : 'Marks'}]
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })}
 
-        {sQuestions.length > 0 && (
-          <div className="space-y-4 pt-2">
-            <h3 className="text-sm font-bold text-blue-900 uppercase border-b border-blue-200 pb-1">
-              SECTION B: SHORT ANSWER QUESTIONS ({sQuestions.length} x {sQuestions[0]?.marks || 4} = {sQuestions.length * (sQuestions[0]?.marks || 4)} Marks)
-            </h3>
-            <div className="space-y-3 text-sm text-slate-900">
-              {sQuestions.map((q: any) => {
-                const currentNum = globalCounter++;
-                return (
-                  <div key={q.id} className="flex justify-between items-start leading-relaxed">
-                    <div>
-                      <span className="font-bold mr-2">Q{currentNum}.</span>
-                      <span>{q.question_text}</span>
-                    </div>
-                    <span className="font-bold text-xs text-slate-500 whitespace-nowrap ml-4">
-                      [{q.marks} Marks]
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {lQuestions.length > 0 && (
-          <div className="space-y-4 pt-2">
-            <h3 className="text-sm font-bold text-blue-900 uppercase border-b border-blue-200 pb-1">
-              SECTION C: LONG ANSWER QUESTIONS ({lQuestions.length} x {lQuestions[0]?.marks || 8} = {lQuestions.length * (lQuestions[0]?.marks || 8)} Marks)
-            </h3>
-            <div className="space-y-4 text-sm text-slate-900">
-              {lQuestions.map((q: any) => {
-                const currentNum = globalCounter++;
-                return (
-                  <div key={q.id} className="flex justify-between items-start leading-relaxed">
-                    <div>
-                      <span className="font-bold mr-2">Q{currentNum}.</span>
-                      <span>{q.question_text}</span>
-                    </div>
-                    <span className="font-bold text-xs text-slate-500 whitespace-nowrap ml-4">
-                      [{q.marks} Marks]
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {includeAnswers && (
           <div className="pt-12 border-t-2 border-dashed border-rose-300 space-y-6 page-break">
