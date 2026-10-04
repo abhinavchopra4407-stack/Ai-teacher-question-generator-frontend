@@ -8,7 +8,11 @@ import {
   BookOpen, 
   Sliders, 
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Plus,
+  Trash2,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
 interface ChapterUploadPageProps {
@@ -73,6 +77,41 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
   ]);
 
   const [specialInstructions, setSpecialInstructions] = useState('');
+
+  const handleAddSection = () => {
+    const newId = `sec-${Date.now()}`;
+    const newSec: SectionConfig = {
+      id: newId,
+      name: `Custom Section ${sections.length + 1}`,
+      type: 'Custom Section',
+      enabled: true,
+      question_count: 3,
+      marks_per_question: 2,
+      expected_length: '40-60 words',
+      difficulty: 'Medium'
+    };
+    setSections([...sections, newSec]);
+  };
+
+  const handleRemoveSection = (index: number) => {
+    if (sections.length <= 1) {
+      showToast('Action Invalid', 'At least one section must remain.', 'info');
+      return;
+    }
+    setSections(sections.filter((_, i) => i !== index));
+  };
+
+  const handleMoveSection = (index: number, direction: 'up' | 'down') => {
+    if ((direction === 'up' && index === 0) || (direction === 'down' && index === sections.length - 1)) {
+      return;
+    }
+    const next = [...sections];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const temp = next[index];
+    next[index] = next[targetIndex];
+    next[targetIndex] = temp;
+    setSections(next);
+  };
 
   const enabledSections = sections.filter(s => s.enabled);
   const totalQuestionsCount = enabledSections.reduce((sum, s) => sum + Number(s.question_count || 0), 0);
@@ -454,8 +493,8 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
               <div className="space-y-3">
                 {sections.map((sec, idx) => (
                   <div key={sec.id || idx} className={`p-3.5 rounded-2xl border transition-all ${sec.enabled ? 'bg-slate-50/80 border-slate-200 shadow-2xs' : 'bg-slate-100/50 border-slate-200 opacity-60'}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                      <div className="flex items-center space-x-2 flex-1 min-w-0">
                         <input
                           type="checkbox"
                           checked={sec.enabled}
@@ -464,7 +503,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                             next[idx].enabled = e.target.checked;
                             setSections(next);
                           }}
-                          className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                          className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer shrink-0"
                         />
                         <input
                           type="text"
@@ -474,12 +513,42 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                             next[idx].name = e.target.value;
                             setSections(next);
                           }}
-                          className="text-xs font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 px-1 py-0.5 focus:outline-hidden"
+                          className="text-xs font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 px-1 py-0.5 focus:outline-hidden w-full"
                         />
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
-                        Subtotal: {Number(sec.question_count || 0) * Number(sec.marks_per_question || 0)} Marks
-                      </span>
+
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
+                          Subtotal: {Number(sec.question_count || 0) * Number(sec.marks_per_question || 0)} Marks
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => handleMoveSection(idx, 'up')}
+                          disabled={idx === 0}
+                          title="Move Up"
+                          className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveSection(idx, 'down')}
+                          disabled={idx === sections.length - 1}
+                          title="Move Down"
+                          className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSection(idx)}
+                          title="Delete Section"
+                          className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     {sec.enabled && (
@@ -489,11 +558,11 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                           <input
                             type="number"
                             min="1"
-                            max="20"
+                            max="50"
                             value={sec.question_count}
                             onChange={(e) => {
                               const next = [...sections];
-                              next[idx].question_count = Math.max(1, Number(e.target.value));
+                              next[idx].question_count = Math.max(1, Math.min(50, Number(e.target.value)));
                               setSections(next);
                             }}
                             className="w-full p-1.5 rounded-lg border border-slate-300 font-bold bg-white text-center"
@@ -504,11 +573,11 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                           <input
                             type="number"
                             min="1"
-                            max="20"
+                            max="100"
                             value={sec.marks_per_question}
                             onChange={(e) => {
                               const next = [...sections];
-                              next[idx].marks_per_question = Math.max(1, Number(e.target.value));
+                              next[idx].marks_per_question = Math.max(1, Math.min(100, Number(e.target.value)));
                               setSections(next);
                             }}
                             className="w-full p-1.5 rounded-lg border border-slate-300 font-bold bg-white text-center"
@@ -518,6 +587,15 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                     )}
                   </div>
                 ))}
+
+                <button
+                  type="button"
+                  onClick={handleAddSection}
+                  className="w-full py-2 bg-indigo-50 border border-dashed border-indigo-300 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Custom Question Section</span>
+                </button>
               </div>
             </div>
 
