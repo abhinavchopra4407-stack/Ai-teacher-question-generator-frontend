@@ -16,7 +16,14 @@ import {
   BookOpen,
   HelpCircle,
   Lightbulb,
-  Code
+  Code,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Square,
+  Radio,
+  Globe
 } from 'lucide-react';
 
 interface AIAssistantPageProps {
@@ -39,18 +46,54 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [showSidebarMobile, setShowSidebarMobile] = useState(false);
+
+  // --- Voice AI Teacher & Speech API States ---
+  const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'hi'>('en');
+  const [autoPlayAudio, setAutoPlayAudio] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<any>(null);
 
-  // Load user conversation history on initial mount
+  // Detect Web Speech API support & load available TTS voices on mount
   useEffect(() => {
     loadConversations();
+
+    // Check Speech Recognition support
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+    }
+
+    // Load Speech Synthesis Voices
+    if ('speechSynthesis' in window) {
+      const updateVoices = () => {
+        setAvailableVoices(window.speechSynthesis.getVoices());
+      };
+      updateVoices();
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
   }, []);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, interimTranscript]);
 
   const loadConversations = async () => {
     try {
@@ -58,7 +101,6 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
       const data = await chatService.getConversations();
       setConversations(data);
       if (data.length > 0 && !activeConversationId) {
-        // Load the most recent conversation by default
         loadConversationDetails(data[0].id);
       }
     } catch (err: any) {
@@ -70,6 +112,7 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
 
   const loadConversationDetails = async (id: string) => {
     try {
+      stopSpeaking();
       setActiveConversationId(id);
       const conv = await chatService.getConversationById(id);
       setMessages(conv.messages || []);
@@ -82,6 +125,8 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   };
 
   const handleNewChat = () => {
+    stopSpeaking();
+    stopListening();
     setActiveConversationId(null);
     setMessages([]);
     setInputMessage('');
@@ -90,14 +135,176 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     }
   };
 
+  // --- Voice AI Teacher Speech Recognition (Web Speech API) ---
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast('Browser Unsupported', 'Speech recognition is not supported in this browser. Please use Google Chrome or MS Edge.', 'error');
+      return;
+    }
+
+    stopSpeaking();
+    stopListening();
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setInterimTranscript('');
+        showToast('Listening...', selectedLanguage === 'hi' ? 'बोलना शुरू करें (Speak now in Hindi)' : 'Speak your question now...', 'info');
+      };
+
+      recognition.onresult = (event: any) => {
+        let currentInterim = '';
+        let finalTranscriptStr = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptPiece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscriptStr += transcriptPiece;
+          } else {
+            currentInterim += transcriptPiece;
+          }
+        }
+
+        if (currentInterim) {
+          setInterimTranscript(currentInterim);
+        }
+
+        if (finalTranscriptStr) {
+          setInputMessage((prev) => (prev ? `${prev} ${finalTranscriptStr}` : finalTranscriptStr));
+          setInterimTranscript('');
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        logger_warn(`Speech recognition error: ${event.error}`);
+        setIsListening(false);
+        setInterimTranscript('');
+        if (event.error === 'not-allowed') {
+          showToast('Microphone Permission Denied', 'Please allow microphone access in your browser location settings.', 'error');
+        } else if (event.error !== 'no-speech') {
+          showToast('Speech Recognition Error', `Could not capture audio: ${event.error}`, 'error');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setInterimTranscript('');
+      };
+
+      recognition.start();
+    } catch (err: any) {
+      setIsListening(false);
+      showToast('Error', 'Failed to start microphone recording', 'error');
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // Ignore
+      }
+    }
+    setIsListening(false);
+    setInterimTranscript('');
+  };
+
+  // --- Voice AI Teacher Text-to-Speech (Web Speech API) ---
+  const cleanMarkdownForSpeech = (text: string): string => {
+    let cleaned = text;
+    cleaned = cleaned.replace(/```[\s\S]*?```/g, 'Code snippet.');
+    cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
+    cleaned = cleaned.replace(/#{1,6}\s+/g, '');
+    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+    cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1');
+    cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    cleaned = cleaned.replace(/[-*+]\s+/g, '');
+    cleaned = cleaned.replace(/\n+/g, '. ');
+    return cleaned.trim();
+  };
+
+  const speakMessage = (messageId: string, text: string) => {
+    if (!('speechSynthesis' in window)) {
+      showToast('Unsupported', 'Text-to-speech is not supported in your browser.', 'error');
+      return;
+    }
+
+    if (speakingMessageId === messageId) {
+      if (isPaused) {
+        window.speechSynthesis.resume();
+        setIsPaused(false);
+      } else {
+        window.speechSynthesis.pause();
+        setIsPaused(true);
+      }
+      return;
+    }
+
+    stopSpeaking();
+
+    const speechText = cleanMarkdownForSpeech(text);
+    if (!speechText) return;
+
+    const utterance = new SpeechSynthesisUtterance(speechText);
+    
+    // Detect Hindi characters in text or check selectedLanguage
+    const containsHindi = /[\u0900-\u097F]/.test(speechText);
+    const targetLang = containsHindi || selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
+    utterance.lang = targetLang;
+
+    // Pick matching voice if available
+    const matchingVoice = availableVoices.find((v) => v.lang.toLowerCase().replace('_', '-').startsWith(targetLang.toLowerCase().slice(0, 2)));
+    if (matchingVoice) {
+      utterance.voice = matchingVoice;
+    }
+
+    utterance.onstart = () => {
+      setSpeakingMessageId(messageId);
+      setIsPaused(false);
+    };
+
+    utterance.onend = () => {
+      setSpeakingMessageId(null);
+      setIsPaused(false);
+    };
+
+    utterance.onerror = () => {
+      setSpeakingMessageId(null);
+      setIsPaused(false);
+    };
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeaking = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeakingMessageId(null);
+    setIsPaused(false);
+  };
+
+  // Helper logger for non-critical warnings
+  const logger_warn = (msg: string) => {
+    console.warn(`[TeachGenie Voice AI] ${msg}`);
+  };
+
   const handleSendMessage = async (textToSend?: string) => {
+    stopListening();
     const query = (textToSend || inputMessage).trim();
     if (!query || isLoading) return;
 
     setInputMessage('');
     setIsLoading(true);
 
-    // Optimistically update UI with user message
     const tempUserMsg: ChatMessage = {
       id: `temp-${Date.now()}`,
       conversation_id: activeConversationId || '',
@@ -115,9 +322,9 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
       });
 
       setActiveConversationId(updatedConv.id);
-      setMessages(updatedConv.messages || []);
+      const newMsgList = updatedConv.messages || [];
+      setMessages(newMsgList);
 
-      // Refresh sidebar conversation list
       setConversations((prev) => {
         const exists = prev.some((c) => c.id === updatedConv.id);
         if (exists) {
@@ -126,9 +333,16 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
           return [updatedConv, ...prev];
         }
       });
+
+      // Auto-play audio if enabled
+      if (autoPlayAudio && newMsgList.length > 0) {
+        const lastMsg = newMsgList[newMsgList.length - 1];
+        if (lastMsg.role === 'assistant') {
+          setTimeout(() => speakMessage(lastMsg.id, lastMsg.content), 300);
+        }
+      }
     } catch (err: any) {
       showToast('AI Response Error', err?.response?.data?.detail || 'Failed to get answer from AI Assistant.', 'error');
-      // Remove temp user message or mark failed
     } finally {
       setIsLoading(false);
     }
@@ -187,35 +401,46 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   const promptSuggestions = [
     {
       title: 'Explain Photosynthesis',
+      hindiTitle: 'प्रकाश संश्लेषण समझाएं',
       description: 'Step-by-step breakdown for Class 8 Science students.',
-      prompt: 'Explain photosynthesis to a Class 8 student with clear points, diagrams description, and key takeaways.',
+      prompt: selectedLanguage === 'hi' 
+        ? 'प्रकाश संश्लेषण (Photosynthesis) की प्रक्रिया को कक्षा 8 के छात्र के लिए आसान शब्दों में समझाएं।' 
+        : 'Explain photosynthesis to a Class 8 student with clear points and key takeaways.',
       icon: BookOpen,
       color: 'from-blue-500 to-indigo-600'
     },
     {
       title: 'Mathematics Lesson Plan',
-      description: '5-step lesson plan for Class 9 Quadratic Equations.',
-      prompt: 'Create a structured 45-minute lesson plan for Class 9 Mathematics on Quadratic Equations with learning objectives and classroom activities.',
+      hindiTitle: 'गणित पाठ योजना (Lesson Plan)',
+      description: 'Structured 45-minute lesson plan for Class 9 Algebra.',
+      prompt: selectedLanguage === 'hi' 
+        ? 'कक्षा 9 गणित के लिए बीजगणित (Algebra) पर 45 मिनट का पाठ योजना तैयार करें।' 
+        : 'Create a structured 45-minute lesson plan for Class 9 Mathematics on Algebraic Identities with learning objectives and activities.',
       icon: Lightbulb,
       color: 'from-amber-500 to-orange-600'
     },
     {
-      title: 'Machine Learning Basics',
-      description: 'Practical concepts with real-world examples & code.',
-      prompt: 'Explain Machine Learning with practical examples, supervised vs unsupervised learning, and a simple Python snippet.',
-      icon: Code,
-      color: 'from-purple-500 to-indigo-600'
-    },
-    {
-      title: 'Quiz & Worksheet Creation',
-      description: '5 questions with detailed answers for Class 10 Physics.',
-      prompt: 'Create a 5-question practice worksheet with complete solutions for Class 10 Physics on Electricity and Ohm\'s Law.',
+      title: 'Physics Worksheet',
+      hindiTitle: 'भौतिकी (Physics) कार्यपत्रक',
+      description: '5 questions with detailed solutions for Class 10 Physics.',
+      prompt: selectedLanguage === 'hi' 
+        ? 'कक्षा 10 भौतिकी के अध्याय ओम के नियम (Ohm\'s Law) पर 5 प्रश्नों का कार्यपत्रक उत्तर सहित बनाएं।' 
+        : 'Create a 5-question practice worksheet with complete solutions for Class 10 Physics on Electricity and Ohm\'s Law.',
       icon: HelpCircle,
       color: 'from-cyan-500 to-blue-600'
+    },
+    {
+      title: 'Computer Science & AI',
+      hindiTitle: 'कंप्यूटर साइंस और मशीन लर्निंग',
+      description: 'Practical concepts with real-world examples & code.',
+      prompt: selectedLanguage === 'hi' 
+        ? 'मशीन लर्निंग (Machine Learning) क्या है? व्यावहारिक उदाहरणों के साथ समझाएं।' 
+        : 'Explain Machine Learning with practical examples, supervised vs unsupervised learning, and a simple Python snippet.',
+      icon: Code,
+      color: 'from-purple-500 to-indigo-600'
     }
   ];
 
-  // Helper to render simple markdown formatting
   const renderFormattedContent = (content: string) => {
     const lines = content.split('\n');
     return lines.map((line, idx) => {
@@ -261,7 +486,6 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
   };
 
   const renderInlineFormat = (text: string) => {
-    // Bold replacement **text**
     const parts = text.split(/(\*\*.*?\*\*)/g);
     return parts.map((part, i) => {
       if (part.startsWith('**') && part.endsWith('**')) {
@@ -393,14 +617,55 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-900 leading-tight">TeachGenie AI Assistant</h2>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-sm font-bold text-slate-900 leading-tight">Voice AI Teacher</h2>
+                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold uppercase tracking-wider flex items-center">
+                  <Mic className="w-3 h-3 mr-1 text-blue-600" /> Speech Enabled
+                </span>
+              </div>
               <span className="inline-flex items-center text-[10px] font-semibold text-emerald-600">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" /> Online · Multi-Subject Teacher AI
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" /> Online · Multi-Subject Voice Co-Pilot
               </span>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          {/* Controls: Language Selector & Auto-Play Audio Toggle */}
+          <div className="flex items-center space-x-3">
+            {/* Language Selector */}
+            <div className="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
+              <Globe className="w-3.5 h-3.5 text-slate-500 ml-1" />
+              <button
+                onClick={() => setSelectedLanguage('en')}
+                className={`px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                  selectedLanguage === 'en' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                English
+              </button>
+              <button
+                onClick={() => setSelectedLanguage('hi')}
+                className={`px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                  selectedLanguage === 'hi' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                हिंदी (Hindi)
+              </button>
+            </div>
+
+            {/* Auto-Play Audio Toggle */}
+            <button
+              onClick={() => setAutoPlayAudio(!autoPlayAudio)}
+              className={`hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                autoPlayAudio 
+                  ? 'bg-blue-50 border-blue-300 text-blue-700' 
+                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+              title="Automatically speak AI answers out loud"
+            >
+              <Volume2 className={`w-3.5 h-3.5 ${autoPlayAudio ? 'text-blue-600 animate-pulse' : 'text-slate-400'}`} />
+              <span>Auto-Speak</span>
+            </button>
+
             <button
               onClick={handleNewChat}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center space-x-1 cursor-pointer"
@@ -417,15 +682,15 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
             /* Welcome Hero View */
             <div className="max-w-3xl mx-auto py-8 text-center space-y-8 animate-in fade-in duration-300">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-500 text-white mx-auto flex items-center justify-center shadow-xl">
-                <Sparkles className="w-9 h-9" />
+                <Sparkles className="w-9 h-9 animate-pulse" />
               </div>
 
               <div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold bg-gradient-to-r from-blue-900 via-indigo-800 to-cyan-600 bg-clip-text text-transparent">
-                  Hello, Teacher! How can I help you today?
+                  {selectedLanguage === 'hi' ? 'नमस्ते शिक्षक! आज मैं आपकी क्या सहायता कर सकता हूँ?' : 'Hello, Teacher! How can I help you today?'}
                 </h1>
                 <p className="text-sm text-slate-600 mt-2 max-w-xl mx-auto">
-                  Ask any question across Science, Math, History, Languages, or Programming. Generate lesson plans, quizzes, and worksheets instantly.
+                  Click the microphone to speak your question in {selectedLanguage === 'hi' ? 'Hindi' : 'English'}, or type below. Listen to AI answers out loud anytime!
                 </p>
               </div>
 
@@ -443,7 +708,9 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                         <div className={`w-8 h-8 rounded-lg bg-gradient-to-r ${item.color} text-white flex items-center justify-center group-hover:scale-105 transition-transform`}>
                           <IconComp className="w-4 h-4" />
                         </div>
-                        <span className="text-xs font-bold text-slate-900 group-hover:text-blue-700">{item.title}</span>
+                        <span className="text-xs font-bold text-slate-900 group-hover:text-blue-700">
+                          {selectedLanguage === 'hi' ? item.hindiTitle : item.title}
+                        </span>
                       </div>
                       <p className="text-xs text-slate-500 leading-snug">{item.description}</p>
                     </button>
@@ -456,6 +723,8 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
             <div className="max-w-4xl mx-auto space-y-6">
               {messages.map((msg, index) => {
                 const isUser = msg.role === 'user';
+                const isSpeakingThis = speakingMessageId === msg.id;
+
                 return (
                   <div
                     key={msg.id || index}
@@ -484,8 +753,37 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                             {renderFormattedContent(msg.content)}
                           </div>
 
-                          {/* Assistant Action Buttons */}
-                          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center space-x-2 text-xs text-slate-500">
+                          {/* Assistant Action Buttons & Speech Player */}
+                          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center space-x-2 text-xs text-slate-500 flex-wrap gap-y-2">
+                            {/* LISTEN / STOP AUDIO BUTTON */}
+                            <button
+                              onClick={() => speakMessage(msg.id, msg.content)}
+                              className={`px-3 py-1 rounded-lg flex items-center space-x-1.5 font-bold transition-all cursor-pointer ${
+                                isSpeakingThis 
+                                  ? 'bg-rose-500 text-white shadow-xs animate-pulse' 
+                                  : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                              }`}
+                              title={isSpeakingThis ? (isPaused ? 'Resume Audio' : 'Pause Audio') : 'Listen to AI answer'}
+                            >
+                              {isSpeakingThis ? (
+                                isPaused ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />
+                              ) : (
+                                <Volume2 className="w-3.5 h-3.5" />
+                              )}
+                              <span>{isSpeakingThis ? (isPaused ? 'Resume' : 'Pause / Stop Audio') : 'Listen'}</span>
+                            </button>
+
+                            {isSpeakingThis && (
+                              <button
+                                onClick={stopSpeaking}
+                                className="px-2 py-1 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center space-x-1 font-semibold cursor-pointer"
+                                title="Stop playback"
+                              >
+                                <Square className="w-3 h-3 fill-slate-700" />
+                                <span>Stop</span>
+                              </button>
+                            )}
+
                             <button
                               onClick={() => handleCopyText(msg.content)}
                               className="px-2.5 py-1 rounded-md hover:bg-slate-100 hover:text-slate-800 flex items-center space-x-1 transition-colors cursor-pointer"
@@ -540,6 +838,23 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
           )}
         </div>
 
+        {/* Live Speech Recognition Transcript Banner */}
+        {(isListening || interimTranscript) && (
+          <div className="px-4 py-2 bg-rose-50 border-t border-rose-200 flex items-center justify-between text-xs text-rose-900 animate-in fade-in duration-150">
+            <div className="flex items-center space-x-2 truncate">
+              <Radio className="w-4 h-4 text-rose-600 animate-pulse shrink-0" />
+              <span className="font-bold">Listening ({selectedLanguage === 'hi' ? 'Hindi' : 'English'}):</span>
+              <span className="italic truncate">{interimTranscript || 'Speak your question into microphone...'}</span>
+            </div>
+            <button
+              onClick={stopListening}
+              className="px-2.5 py-1 rounded bg-rose-600 text-white font-bold hover:bg-rose-700 transition-colors shrink-0 ml-2 cursor-pointer"
+            >
+              Stop Recording
+            </button>
+          </div>
+        )}
+
         {/* Input Bar Footer */}
         <footer className="p-4 border-t border-slate-200 bg-white">
           <div className="max-w-4xl mx-auto relative">
@@ -549,25 +864,45 @@ export const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything: Explain a concept, create a lesson plan, or generate quiz questions... (Press Enter to send, Shift+Enter for new line)"
-              className="w-full pl-4 pr-14 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white resize-none shadow-xs"
+              placeholder={`Ask anything by typing or clicking the microphone... (${selectedLanguage === 'hi' ? 'हिंदी' : 'English'}, Enter to send)`}
+              className="w-full pl-4 pr-24 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white resize-none shadow-xs"
             />
 
-            <button
-              onClick={() => handleSendMessage()}
-              disabled={!inputMessage.trim() || isLoading}
-              className={`
-                absolute right-3 bottom-3 p-2 rounded-lg text-white shadow-xs transition-all cursor-pointer
-                ${inputMessage.trim() && !isLoading 
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700' 
-                  : 'bg-slate-300 cursor-not-allowed'}
-              `}
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            <div className="absolute right-3 bottom-3 flex items-center space-x-1.5">
+              {/* MICROPHONE BUTTON */}
+              <button
+                onClick={isListening ? stopListening : startListening}
+                className={`
+                  p-2 rounded-lg text-white shadow-xs transition-all cursor-pointer
+                  ${isListening 
+                    ? 'bg-rose-600 hover:bg-rose-700 animate-pulse ring-2 ring-rose-400' 
+                    : (speechSupported ? 'bg-slate-700 hover:bg-slate-800' : 'bg-slate-300 cursor-not-allowed')}
+                `}
+                title={isListening ? 'Stop Recording' : `Click to speak question in ${selectedLanguage === 'hi' ? 'Hindi' : 'English'}`}
+                disabled={!speechSupported}
+              >
+                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </button>
+
+              {/* SEND BUTTON */}
+              <button
+                onClick={() => handleSendMessage()}
+                disabled={!inputMessage.trim() || isLoading}
+                className={`
+                  p-2 rounded-lg text-white shadow-xs transition-all cursor-pointer
+                  ${inputMessage.trim() && !isLoading 
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700' 
+                    : 'bg-slate-300 cursor-not-allowed'}
+                `}
+                title="Send message"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
           </div>
+
           <p className="text-[11px] text-center text-slate-400 mt-2">
-            TeachGenie AI Assistant helps educators build quality lessons. Always verify answers prior to classroom distribution.
+            TeachGenie Voice AI Teacher uses Web Speech APIs. Always verify educational answers prior to classroom distribution.
           </p>
         </footer>
       </main>
