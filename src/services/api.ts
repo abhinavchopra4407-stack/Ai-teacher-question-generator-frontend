@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { User, QuestionPaper, SingleQuestion, DashboardStats, GenerateQuestionsRequest } from '../types';
+import type { User, QuestionPaper, SingleQuestion, DashboardStats, GenerateQuestionsRequest, Conversation } from '../types';
 
 // Compute backend API base URL dynamically
 const getApiBase = (): string => {
@@ -132,6 +132,29 @@ export const paperService = {
 export const dashboardService = {
   async getStats(): Promise<DashboardStats> {
     const res = await api.get('/dashboard/stats');
+    return res.data;
+  }
+};
+
+export const chatService = {
+  async getConversations(): Promise<Conversation[]> {
+    const res = await api.get('/chat/conversations');
+    return res.data;
+  },
+  async getConversationById(id: string): Promise<Conversation> {
+    const res = await api.get(`/chat/conversations/${id}`);
+    return res.data;
+  },
+  async sendMessage(data: { conversation_id?: string; message: string }): Promise<Conversation> {
+    const res = await api.post('/chat/send', data);
+    return res.data;
+  },
+  async renameConversation(id: string, title: string): Promise<Conversation> {
+    const res = await api.put(`/chat/conversations/${id}`, { title });
+    return res.data;
+  },
+  async deleteConversation(id: string) {
+    const res = await api.delete(`/chat/conversations/${id}`);
     return res.data;
   }
 };

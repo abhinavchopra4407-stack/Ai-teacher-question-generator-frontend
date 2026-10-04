@@ -9,7 +9,8 @@ import {
   LogOut, 
   Menu, 
   X, 
-  ShieldCheck
+  ShieldCheck,
+  Bot
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -24,6 +25,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, setActivePage }) => 
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'ai-assistant', label: 'AI Assistant', icon: Bot },
     { id: 'upload', label: 'Generate Questions', icon: FilePlus },
     { id: 'saved', label: 'Saved Papers', icon: FolderArchive },
     { id: 'settings', label: 'Settings', icon: Settings },

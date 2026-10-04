@@ -15,10 +15,17 @@ import { QuestionEditorPage } from './pages/QuestionEditorPage';
 import { SavedPapersPage } from './pages/SavedPapersPage';
 import { PaperPreviewPage } from './pages/PaperPreviewPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AIAssistantPage } from './pages/AIAssistantPage';
 
 const MainContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [activePage, setActivePage] = useState<string>('landing');
+  const [activePage, setActivePage] = useState<string>(() => {
+    const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+    if (['ai-assistant', 'dashboard', 'upload', 'saved', 'settings', 'login', 'register'].includes(path)) {
+      return path;
+    }
+    return 'landing';
+  });
   const [selectedPaperId, setSelectedPaperId] = useState<string>('');
   const [paperData, setPaperData] = useState<any>(null);
   const [chapterText, setChapterText] = useState<string>('');
@@ -52,7 +59,7 @@ const MainContent: React.FC = () => {
       );
     }
 
-    const protectedPages = ['dashboard', 'upload', 'editor', 'saved', 'preview', 'settings'];
+    const protectedPages = ['dashboard', 'ai-assistant', 'upload', 'editor', 'saved', 'preview', 'settings'];
     if (!isAuthenticated && protectedPages.includes(activePage)) {
       return <LoginPage setActivePage={setActivePage} />;
     }
@@ -71,6 +78,14 @@ const MainContent: React.FC = () => {
           <DashboardPage
             setActivePage={setActivePage}
             setSelectedPaperId={setSelectedPaperId}
+            showToast={showToast}
+          />
+        );
+      case 'ai-assistant':
+        return (
+          <AIAssistantPage
+            setActivePage={setActivePage}
+            setChapterText={setChapterText}
             showToast={showToast}
           />
         );
