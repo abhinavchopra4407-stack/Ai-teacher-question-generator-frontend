@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { documentService, questionService } from '../services/api';
-import type { GenerateQuestionsRequest, SectionConfig } from '../types';
+import type { GenerateQuestionsRequest, SectionConfig, Chapter } from '../types';
 import { 
   UploadCloud, 
   FileCheck, 
@@ -12,7 +12,9 @@ import {
   Plus,
   Trash2,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 
 interface ChapterUploadPageProps {
@@ -34,6 +36,15 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
   const [extractedText, setExtractedText] = useState('');
   const [wordCount, setWordCount] = useState(0);
   const [documentId, setDocumentId] = useState<string | undefined>(undefined);
+
+  // Chapter Detection & Manual Fallback State
+  const [detectedChapters, setDetectedChapters] = useState<Chapter[]>([]);
+  const [overallConfidence, setOverallConfidence] = useState<string>('high');
+  const [selectedChapterId, setSelectedChapterId] = useState<string>('');
+  const [isManualRangeMode, setIsManualRangeMode] = useState<boolean>(false);
+  const [startPage, setStartPage] = useState<number>(1);
+  const [endPage, setEndPage] = useState<number>(10);
+  const [generationStage, setGenerationStage] = useState<string>('');
 
   // Metadata Fields
   const [chapterTitle, setChapterTitle] = useState('');
@@ -178,7 +189,15 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       setWordCount(res.word_count);
       setDocumentId(res.document_id);
       setChapterText(res.extracted_text);
-      showToast('Document Processed', `Extracted ${res.word_count} words successfully.`, 'success');
+      setDetectedChapters(res.chapters || []);
+      setOverallConfidence(res.overall_confidence || 'high');
+
+      if (res.chapters && res.chapters.length > 1) {
+        setSelectedChapterId(''); // Default to All Chapters
+        showToast('Document Processed', `✓ ${res.chapters.length} chapters detected automatically!`, 'success');
+      } else {
+        showToast('Document Processed', `Extracted ${res.word_count} words successfully.`, 'success');
+      }
     } catch (err: any) {
       setError(formatErrorDetail(err, 'Failed to extract text from document.'));
     } finally {
@@ -187,8 +206,8 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
   };
 
   const handleGenerate = async () => {
-    if (!chapterTitle.trim()) {
-      setError('Please provide a Chapter Title.');
+    if (!chapterTitle.trim() && !selectedChapterId) {
+      setError('Please provide a Chapter Title or select a chapter.');
       return;
     }
 
@@ -208,6 +227,8 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
         setWordCount(res.word_count);
         setDocumentId(res.document_id);
         setChapterText(res.extracted_text);
+        setDetectedChapters(res.chapters || []);
+        setOverallConfidence(res.overall_confidence || 'high');
       } catch (err: any) {
         setError(formatErrorDetail(err, 'Failed to extract text from document.'));
         setExtracting(false);
@@ -226,9 +247,31 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
     setGenerating(true);
 
     try {
+      let chapId: string | undefined = undefined;
+      let startP: number | undefined = undefined;
+      let endP: number | undefined = undefined;
+
+      if (isManualRangeMode) {
+        startP = startPage;
+        endP = endPage;
+        setGenerationStage(`Extracting pages ${startPage} to ${endPage}...`);
+      } else if (selectedChapterId) {
+        chapId = selectedChapterId;
+        const selectedChapObj = detectedChapters.find(c => c.id === selectedChapterId);
+        setGenerationStage(`Retrieving ONLY ${selectedChapObj ? selectedChapObj.title : 'Selected Chapter'} content...`);
+      } else {
+        setGenerationStage("Preparing entire document content...");
+      }
+
+      await new Promise(r => setTimeout(r, 400));
+      setGenerationStage("Generating questions with strict chapter safeguards...");
+
       const req: GenerateQuestionsRequest = {
         document_id: currentDocId,
-        chapter_title: chapterTitle,
+        chapter_id: chapId,
+        start_page: startP,
+        end_page: endP,
+        chapter_title: chapterTitle || 'Chapter Questions',
         subject,
         grade,
         board,
@@ -245,6 +288,9 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
       };
 
       const result = await questionService.generate(req);
+      setGenerationStage("Validating question sources & anti-hallucination safeguards...");
+      await new Promise(r => setTimeout(r, 300));
+
       setGeneratedPaperData({
         ...result,
         document_id: currentDocId,
@@ -254,12 +300,17 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
         instructions: "Attempt all questions. Read instructions carefully."
       });
 
-      showToast('Questions Generated', `Generated ${totalQuestionsCount} questions (${totalMarksCount} Total Marks) successfully!`, 'success');
+      const selectedName = selectedChapterId 
+        ? (detectedChapters.find(c => c.id === selectedChapterId)?.title || 'Selected Chapter')
+        : (isManualRangeMode ? `Pages ${startPage}-${endPage}` : 'Selected Chapter');
+
+      showToast('Questions Generated', `Generated ${totalQuestionsCount} questions (${totalMarksCount} Marks) from ${selectedName}!`, 'success');
       setActivePage('editor');
     } catch (err: any) {
       setError(formatErrorDetail(err, 'AI question generation failed. Please try again.'));
     } finally {
       setGenerating(false);
+      setGenerationStage('');
     }
   };
 
@@ -365,18 +416,120 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
           )}
 
           {extractedText && (
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                 <span className="flex items-center space-x-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Text Ready for AI Question Generation</span>
+                  <span>Document Extracted Successfully</span>
                 </span>
-                <span className="px-2 py-0.5 bg-slate-200 rounded text-[11px] text-slate-700">
+                <span className="px-2 py-0.5 bg-slate-200 rounded text-[11px] text-slate-700 font-mono">
                   {wordCount} Words
                 </span>
               </div>
-              <div className="max-h-36 overflow-y-auto text-xs text-slate-600 font-mono p-2.5 bg-white rounded-xl border border-slate-200 leading-relaxed">
-                {extractedText.substring(0, 500)}...
+
+              {detectedChapters.length > 0 && (
+                <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50/60 rounded-xl border border-blue-200/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-blue-600" />
+                      <span className="font-extrabold text-xs text-slate-800">
+                        {detectedChapters.length} Chapters Auto-Detected
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                      overallConfidence === 'high' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
+                    }`}>
+                      Confidence: {overallConfidence.toUpperCase()}
+                    </span>
+                  </div>
+
+                  {overallConfidence === 'low' && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start space-x-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <span>Chapter boundaries could not be determined confidently. Please verify boundaries or select manual page range.</span>
+                    </div>
+                  )}
+
+                  {!isManualRangeMode ? (
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700">Select Target Chapter *</label>
+                      <select
+                        value={selectedChapterId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setSelectedChapterId(id);
+                          if (id) {
+                            const chap = detectedChapters.find(c => c.id === id);
+                            if (chap) setChapterTitle(chap.title);
+                          } else {
+                            setChapterTitle(file ? file.name.replace(/\.[^/.]+$/, "") : 'All Chapters');
+                          }
+                        }}
+                        className="w-full p-2.5 rounded-xl border border-blue-300 bg-white text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 shadow-xs"
+                      >
+                        <option value="">[All Chapters] — Generate questions from entire document</option>
+                        {detectedChapters.map((ch) => (
+                          <option key={ch.id} value={ch.id}>
+                            Chapter {ch.chapter_number}: {ch.title} (Pages {ch.start_page}–{ch.end_page})
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex justify-end pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setIsManualRangeMode(true)}
+                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline flex items-center space-x-1 cursor-pointer"
+                        >
+                          <HelpCircle className="w-3 h-3 mr-0.5" />
+                          <span>Can't find your chapter? Select page range manually</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-indigo-900">Manual Chapter Page Range Selection</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsManualRangeMode(false)}
+                          className="text-[11px] text-slate-500 hover:text-slate-800 underline font-semibold cursor-pointer"
+                        >
+                          Switch to Auto-Detected Chapters
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1">Start Page</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={startPage}
+                            onChange={(e) => setStartPage(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-full p-2 rounded-lg border border-slate-300 font-bold bg-slate-50 text-center"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1">End Page</label>
+                          <input
+                            type="number"
+                            min={startPage}
+                            value={endPage}
+                            onChange={(e) => setEndPage(Math.max(startPage, parseInt(e.target.value) || startPage))}
+                            className="w-full p-2 rounded-lg border border-slate-300 font-bold bg-slate-50 text-center"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-500 italic">
+                        Questions will be generated ONLY from pages {startPage} to {endPage}.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="max-h-28 overflow-y-auto text-xs text-slate-600 font-mono p-2.5 bg-white rounded-xl border border-slate-200 leading-relaxed">
+                {extractedText.substring(0, 400)}...
               </div>
             </div>
           )}
@@ -611,7 +764,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
             </div>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
             <button
               onClick={handleGenerate}
               disabled={generating}
@@ -620,7 +773,7 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
               {generating ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Generating {totalQuestionsCount} AI Questions ({totalMarksCount} Marks)...</span>
+                  <span>{generationStage || `Generating ${totalQuestionsCount} AI Questions (${totalMarksCount} Marks)...`}</span>
                 </>
               ) : (
                 <>
@@ -629,6 +782,11 @@ export const ChapterUploadPage: React.FC<ChapterUploadPageProps> = ({
                 </>
               )}
             </button>
+            {generating && generationStage && (
+              <p className="text-[11px] text-center font-bold text-indigo-600 animate-pulse">
+                {generationStage}
+              </p>
+            )}
           </div>
         </div>
       </div>

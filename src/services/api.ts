@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { User, QuestionPaper, SingleQuestion, DashboardStats, GenerateQuestionsRequest, Conversation } from '../types';
+import type { User, QuestionPaper, SingleQuestion, DashboardStats, GenerateQuestionsRequest, Conversation, Chapter, TextExtractResponse } from '../types';
 
 // Compute backend API base URL dynamically
 const getApiBase = (): string => {
@@ -57,12 +57,16 @@ export const authService = {
 };
 
 export const documentService = {
-  async upload(formData: FormData) {
+  async upload(formData: FormData): Promise<TextExtractResponse> {
     const res = await api.post('/documents/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return res.data;
+  },
+  async getDocumentChapters(documentId: string): Promise<Chapter[]> {
+    const res = await api.get(`/documents/${documentId}/chapters`);
     return res.data;
   }
 };

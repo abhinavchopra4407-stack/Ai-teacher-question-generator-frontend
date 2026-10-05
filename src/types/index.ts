@@ -18,6 +18,29 @@ export interface SectionConfig {
   difficulty?: string;
 }
 
+export interface Chapter {
+  id: string;
+  document_id: string;
+  chapter_number: number;
+  title: string;
+  start_page: number;
+  end_page: number;
+  extracted_text?: string;
+  word_count?: number;
+  detection_confidence?: 'high' | 'medium' | 'low' | string;
+  created_at?: string;
+}
+
+export interface TextExtractResponse {
+  extracted_text: string;
+  word_count: number;
+  file_name: string;
+  file_type: string;
+  document_id: string;
+  chapters: Chapter[];
+  overall_confidence: 'high' | 'medium' | 'low' | string;
+}
+
 export interface SingleQuestion {
   id: string;
   question_number: number;
@@ -28,6 +51,9 @@ export interface SingleQuestion {
   related_topic: string;
   section_name?: string;
   source_pages?: number[];
+  source_chapter?: string;
+  source_page?: number;
+  source_chunk?: string;
   answer?: string;
   marking_points?: string[];
   expected_length?: string;
@@ -62,6 +88,9 @@ export interface DashboardStats {
 
 export interface GenerateQuestionsRequest {
   document_id?: string;
+  chapter_id?: string;
+  start_page?: number;
+  end_page?: number;
   chapter_title: string;
   subject: string;
   grade: string;
